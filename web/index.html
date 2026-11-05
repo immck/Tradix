@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Tradix · 交易矩阵 — 结构分析终端</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230b1220'/%3E%3Cpath d='M7 21l6-7 4 4 8-9' stroke='%2331e5a3' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
+<link rel="stylesheet" href="style.css?v=3" />
+</head>
+<body>
+<div class="bg-glow"></div>
+
+<header class="topbar">
+  <div class="brand">
+    <div class="brand-mark">
+      <svg viewBox="0 0 24 24" width="19" height="19" aria-hidden="true">
+        <rect x="4" y="11" width="3.6" height="9" rx="1.2" fill="#04140e"/>
+        <rect x="10.2" y="4" width="3.6" height="16" rx="1.2" fill="#04140e"/>
+        <rect x="16.4" y="7.5" width="3.6" height="12.5" rx="1.2" fill="#04140e" opacity=".78"/>
+      </svg>
+    </div>
+    <div class="brand-text">
+      <b>TRADIX</b>
+      <span>交易矩阵 · 结构 · 趋势</span>
+    </div>
+  </div>
+
+  <div class="search-wrap">
+    <svg class="search-icon" viewBox="0 0 24 24" width="16" height="16"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M20 20l-3.5-3.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    <input id="symbolInput" type="text" placeholder="输入代码：BTC / ETH / SOL / NVDA / AAPL / 600519" autocomplete="off" spellcheck="false" />
+    <kbd>/</kbd>
+    <div id="suggestBox" class="suggest hidden"></div>
+  </div>
+
+  <div class="seg" id="marketSeg">
+    <button data-market="auto" class="on">自动</button>
+    <button data-market="crypto">加密</button>
+    <button data-market="us">美股</button>
+    <button data-market="cn">A股</button>
+  </div>
+
+  <div class="seg" id="tfSeg">
+    <button data-tf="1h">1H</button>
+    <button data-tf="4h">4H</button>
+    <button data-tf="1d" class="on">1D</button>
+    <button data-tf="1w">1W</button>
+  </div>
+
+  <button id="refreshBtn" class="icon-btn" title="刷新数据">
+    <svg viewBox="0 0 24 24" width="17" height="17"><path d="M20 11a8 8 0 10-2.3 6.3M20 5v6h-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  </button>
+
+  <label class="switch" title="每 60 秒自动刷新">
+    <input type="checkbox" id="autoToggle" checked />
+    <span class="track"><i></i></span>
+    <em>自动</em>
+  </label>
+</header>
+
+<main class="layout">
+  <!-- ============ 左：自选 ============ -->
+  <aside class="col-left">
+    <section class="panel watch-panel">
+      <div class="panel-head">
+        <div class="panel-title"><span class="dot"></span>自选列表</div>
+        <button id="addWatchBtn" class="mini-btn" title="把当前品种加入自选">＋</button>
+      </div>
+      <div id="watchList" class="watch-list"></div>
+      <button id="scanBtn" class="ghost-btn">扫描自选信号</button>
+    </section>
+
+    <section class="panel quick-panel">
+      <div class="panel-head"><div class="panel-title"><span class="dot blue"></span>快捷品种</div></div>
+      <div class="chips" id="quickChips">
+        <button data-sym="BTC">BTC</button>
+        <button data-sym="ETH">ETH</button>
+        <button data-sym="SOL">SOL</button>
+        <button data-sym="DOGE">DOGE</button>
+        <button data-sym="NVDA">NVDA</button>
+        <button data-sym="AAPL">AAPL</button>
+        <button data-sym="TSLA">TSLA</button>
+        <button data-sym="600519">600519</button>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><div class="panel-title"><span class="dot amber"></span>评分刻度</div></div>
+      <div class="scale-list">
+        <div class="scale-row"><i style="background:#2fe3a4"></i>强势多头<span>≥ +55</span></div>
+        <div class="scale-row"><i style="background:#5fe0b6"></i>多头趋势<span>+25 ~ +55</span></div>
+        <div class="scale-row"><i style="background:#f6b64b"></i>震荡整理<span>-25 ~ +25</span></div>
+        <div class="scale-row"><i style="background:#ff8a9c"></i>空头趋势<span>-55 ~ -25</span></div>
+        <div class="scale-row"><i style="background:#ff5b76"></i>强势空头<span>≤ -55</span></div>
+      </div>
+    </section>
+
+    <section class="panel mini-note">
+      <p>评分综合 <b>均线 / MACD / RSI / ADX / 布林 / 量能 / 摆动结构 / 回归趋势</b> 八个维度，仅作技术结构参考，不构成投资建议。</p>
+    </section>
+  </aside>
+
+  <!-- ============ 中：行情 + 图表 + 矩阵 ============ -->
+  <section class="col-center">
+    <section class="panel quote-card" id="quoteCard">
+      <div class="quote-top">
+        <div class="quote-id">
+          <div class="quote-name"><span id="qDisplay">—</span><em id="qName"></em></div>
+          <div class="quote-tags">
+            <span class="tag" id="qMarket">—</span>
+            <span class="tag ghost" id="qTf">—</span>
+            <span class="tag ghost" id="qStatus">—</span>
+            <span class="tag ghost" id="qStale" hidden>缓存</span>
+          </div>
+        </div>
+        <div class="quote-price">
+          <div class="price" id="qPrice">—</div>
+          <div class="chg" id="qChg">—</div>
+        </div>
+        <div class="quote-stats">
+          <div class="qs"><span>最高</span><b id="qHigh">—</b></div>
+          <div class="qs"><span>最低</span><b id="qLow">—</b></div>
+          <div class="qs"><span>成交额</span><b id="qVol">—</b></div>
+          <div class="qs"><span>ATR</span><b id="qAtr">—</b></div>
+        </div>
+        <div class="quote-meta">
+          <span id="qSource">—</span>
+          <span id="qTime">—</span>
+        </div>
+      </div>
+      <div class="perf-row" id="perfRow"></div>
+    </section>
+
+    <section class="panel chart-card">
+      <div class="chart-head">
+        <div class="chart-tabs">
+          <span class="ct">K 线结构</span>
+          <span class="ct-note" id="chartLegend"></span>
+        </div>
+        <div class="chart-tools">
+          <div class="seg tiny" id="indSeg">
+            <button data-ind="macd" class="on">MACD</button>
+            <button data-ind="rsi">RSI</button>
+            <button data-ind="none">关闭</button>
+          </div>
+          <label class="check"><input type="checkbox" id="bbToggle" checked /><span>布林</span></label>
+          <label class="check"><input type="checkbox" id="emaToggle" checked /><span>EMA</span></label>
+        </div>
+      </div>
+      <div class="chart-wrap">
+        <canvas id="kline"></canvas>
+        <div id="chartTip" class="chart-tip hidden"></div>
+        <div id="chartLoading" class="chart-loading hidden"><div class="spinner"></div><span>正在拉取行情与计算指标…</span></div>
+      </div>
+    </section>
+
+    <div class="grid-2">
+      <section class="panel">
+        <div class="panel-head">
+          <div class="panel-title"><span class="dot"></span>指标结构矩阵</div>
+          <span class="panel-sub" id="matrixSub">8 因子加权</span>
+        </div>
+        <div id="matrixList" class="matrix-list"></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <div class="panel-title"><span class="dot purple"></span>多周期共振</div>
+          <span class="badge" id="mtfBadge">—</span>
+        </div>
+        <div id="mtfList" class="mtf-list"></div>
+        <div class="mtf-foot" id="mtfFoot"></div>
+      </section>
+    </div>
+
+    <div class="grid-2">
+      <section class="panel">
+        <div class="panel-head">
+          <div class="panel-title"><span class="dot"></span>信号明细</div>
+          <span class="panel-sub" id="signalCount">—</span>
+        </div>
+        <div id="signalList" class="signal-list"></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <div class="panel-title"><span class="dot amber"></span>风险提示</div>
+          <span class="panel-sub">风控优先</span>
+        </div>
+        <div id="riskList" class="risk-list"></div>
+      </section>
+    </div>
+  </section>
+
+  <!-- ============ 右：结论 + 计划 + 价位 ============ -->
+  <aside class="col-right">
+    <section class="panel verdict-card">
+      <div class="gauge-wrap">
+        <svg class="gauge" viewBox="0 0 220 132">
+          <defs>
+            <linearGradient id="gaugeGrad" x1="0" y1="0" x2="1" y2="0">
+              <stop offset="0%" stop-color="#ff5d78" />
+              <stop offset="38%" stop-color="#f7b955" />
+              <stop offset="50%" stop-color="#5b6a83" />
+              <stop offset="62%" stop-color="#f7b955" />
+              <stop offset="100%" stop-color="#31e5a3" />
+            </linearGradient>
+          </defs>
+          <path d="M22 110 A88 88 0 0 1 198 110" class="gauge-track" />
+          <path id="gaugeArc" d="M22 110 A88 88 0 0 1 198 110" class="gauge-value" />
+          <circle id="gaugeDot" class="gauge-dot" r="5" cx="22" cy="110" />
+        </svg>
+        <div class="gauge-center">
+          <b id="gaugeScore">—</b>
+          <span id="gaugeLabel">综合评分</span>
+        </div>
+      </div>
+      <div class="verdict-main">
+        <div class="verdict-badge" id="gaugeVerdict">等待分析</div>
+        <div class="verdict-sub">
+          <span>置信度 <b id="gaugeConf">—</b></span>
+          <span class="sep"></span>
+          <span>多周期 <b id="overallScore">—</b></span>
+        </div>
+      </div>
+      <p class="summary" id="summaryText">输入交易品种，开始分析它的指标结构与趋势状态。</p>
+      <div class="overall-strip" id="overallStrip"></div>
+    </section>
+
+    <section class="panel plan-card">
+      <div class="panel-head">
+        <div class="panel-title"><span class="dot"></span>交易计划</div>
+        <span class="badge" id="planBias">—</span>
+      </div>
+      <div id="planBody" class="plan-body"></div>
+    </section>
+
+    <section class="panel levels-card">
+      <div class="panel-head">
+        <div class="panel-title"><span class="dot blue"></span>关键价位</div>
+        <span class="panel-sub">结构聚类</span>
+      </div>
+      <div id="levelList" class="level-list"></div>
+    </section>
+  </aside>
+</main>
+
+<footer class="foot">
+  <span>Tradix · 交易矩阵 · 本地运行</span>
+  <span>数据：Gate.io / 新浪财经 / 腾讯财经</span>
+  <span>本工具仅做技术结构分析，不构成任何投资建议</span>
+</footer>
+
+<div id="toast" class="toast hidden"></div>
+<script src="chart.js?v=3"></script>
+<script src="app.js?v=3"></script>
+</body>
+</html>

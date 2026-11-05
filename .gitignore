@@ -1,0 +1,25 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+.env
+
+# ---- 运行时缓存（行情数据，不入库）----
+data/cache/
+data/*.log
+
+# ---- 编辑器 / 系统 ----
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---- 临时文件 ----
+*.log
+*.tmp
+_cp*/
+_shot*.png
+_crop*.png
