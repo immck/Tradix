@@ -2,12 +2,12 @@
 
 ![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-2fe3a4)
-![Dependencies](https://img.shields.io/badge/dependencies-0-31e5a3)
+![Dependencies](https://img.shields.io/badge/dependencies-tzdata-31e5a3)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-6aa6ff)
 
 **Tradix（交易矩阵）** 是一个本地运行的交易分析工具：输入加密货币 / 美股 / A 股代码，自动拉取行情、计算指标、拆解「指标结构」并给出趋势判定、关键价位与交易计划。
 
-> 面向加密市场与美股，同时兼容 A 股。纯 Python 标准库实现，无需安装任何第三方依赖，不需要 API Key。
+> 面向加密市场与美股，同时兼容 A 股。分析和服务使用 Python 标准库；tzdata 提供跨平台时区数据，不需要 API Key。
 
 <p align="center">
   <img src="preview.png" width="900" alt="Tradix 桌面端预览" />
@@ -24,6 +24,7 @@
 # 方式一：双击 start.bat（Windows）
 # 方式二：命令行
 cd tradix
+python -m pip install -r requirements.txt
 python server.py
 ```
 
@@ -96,6 +97,14 @@ python server.py --port 9000
 - 加密货币为 7×24 连续交易；美股/A 股按各自交易时段判断 K 线是否收盘。
 - 图表时间：加密货币为北京时间（UTC+8），美股为美东时间（ET），A 股为北京时间。
 
+## 回归测试
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+测试使用模拟行情，不依赖外部行情接口。
+
 ## HTTP API
 
 ```http
@@ -147,17 +156,18 @@ python tools/cli.py 600519 1d
 
 ## English
 
-**Tradix** is a local, zero-dependency trading structure terminal for crypto (Gate.io),
+**Tradix** is a local trading structure terminal for crypto (Gate.io),
 US stocks (Sina Finance) and China A-shares (Tencent). Give it a ticker and it returns an
 8-factor technical score, market-structure read (HH/HL vs LH/LL), multi-timeframe resonance,
 clustered support/resistance, and a risk-defined trade plan (entry / stop / targets / R:R).
 
 ```bash
 cd tradix
+python -m pip install -r requirements.txt
 python server.py   # open http://127.0.0.1:8899
 ```
 
-Pure Python 3.10+, no API keys, no pip install. Charts are rendered on a hand-written
+Python 3.10+, with tzdata for cross-platform timezone support; no API keys. Charts use a
 HTML5 Canvas engine. For research and education only — not investment advice.
 
 ## 说明

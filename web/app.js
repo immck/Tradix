@@ -51,7 +51,7 @@
     if (a >= 1000) return v.toLocaleString("en-US", { maximumFractionDigits: 2 });
     if (a >= 100) return v.toFixed(2);
     if (a >= 1) return v.toFixed(3);
-    return v.toFixed(5);
+    return Number(v.toPrecision(6)).toString();
   }
   function fmtVol(v) {
     if (!v && v !== 0) return "—";
@@ -83,13 +83,17 @@
   /* ---------------- 初始化 ---------------- */
   function init() {
     const savedWatch = localStorage.getItem("tradix.watch");
-    state.watch = savedWatch ? JSON.parse(savedWatch) : DEFAULT_WATCH.slice();
-    if (!Array.isArray(state.watch) || !state.watch.length) state.watch = DEFAULT_WATCH.slice();
+    try { state.watch = savedWatch ? JSON.parse(savedWatch) : DEFAULT_WATCH.slice(); }
+    catch (_) { state.watch = DEFAULT_WATCH.slice(); }
+    if (!Array.isArray(state.watch)) state.watch = DEFAULT_WATCH.slice();
+    state.watch = [...new Set(state.watch.filter(s => typeof s === "string" && s.trim()))];
 
     const q = new URLSearchParams(location.search);
     state.symbol = (q.get("symbol") || localStorage.getItem("tradix.symbol") || "BTC").toUpperCase();
     state.tf = q.get("tf") || localStorage.getItem("tradix.tf") || "1d";
     state.market = q.get("market") || "auto";
+    if (!["1h", "4h", "1d", "1w"].includes(state.tf)) state.tf = "1d";
+    if (!["auto", "crypto", "us", "cn"].includes(state.market)) state.market = "auto";
 
     $("symbolInput").value = state.symbol;
     setSeg("tfSeg", "tf", state.tf);
@@ -129,14 +133,14 @@
         state.tf = b.dataset.tf;
         setSeg("tfSeg", "tf", state.tf);
         localStorage.setItem("tradix.tf", state.tf);
-        if (state.data) load(state.data.meta.display, { silent: true });
+        load(state.symbol, { silent: true });
       })
     );
     document.querySelectorAll("#marketSeg button").forEach((b) =>
       b.addEventListener("click", () => {
         state.market = b.dataset.market;
         setSeg("marketSeg", "market", state.market);
-        if (state.data) load(state.data.meta.display, { silent: true });
+        load(state.symbol, { silent: true });
       })
     );
     document.querySelectorAll("#indSeg button").forEach((b) =>
@@ -156,7 +160,7 @@
       state.chart.setConfig({ showEMA: state.ema });
     });
     $("refreshBtn").addEventListener("click", () => {
-      if (state.data) load(state.data.meta.display, { silent: false, force: true });
+      load(state.symbol, { silent: false });
     });
     $("autoToggle").addEventListener("change", (e) => {
       state.auto = e.target.checked;
@@ -175,7 +179,7 @@
     $("scanBtn").addEventListener("click", () => scan(true));
     $("quickChips").addEventListener("click", (e) => {
       const b = e.target.closest("button");
-      if (b) load(b.dataset.sym);
+      if (b) load(b.dataset.sym, { market: "auto" });
     });
     $("watchList").addEventListener("click", (e) => {
       const del = e.target.closest(".w-del");
@@ -186,7 +190,7 @@
         persistWatch(); renderWatch(); return;
       }
       const item = e.target.closest(".watch-item");
-      if (item) load(item.dataset.sym);
+      if (item) load(item.dataset.sym, { market: "auto" });
     });
     document.addEventListener("keydown", (e) => {
       if (e.key === "/" && document.activeElement !== $("symbolInput")) {
@@ -240,41 +244,66 @@
   /* ---------------- 数据加载 ---------------- */
   async function load(symbol, opts) {
     opts = opts || {};
-    if (state.loading) return;
+    if (state.controller) state.controller.abort();
+    const requestId = state.requestId = (state.requestId || 0) + 1;
+    if (opts.market) state.market = opts.market;
+    const isCN = state.market === "cn" || (state.market === "auto" && /^(?:(?:sh|sz|bj))?\d{6}(?:\.(?:sh|sz|bj))?$/i.test(symbol));
+    if (isCN && !["1d", "1w", "1M"].includes(state.tf)) state.tf = "1d";
+    const tf = state.tf, market = state.market;
+    setSeg("tfSeg", "tf", tf);
+    setSeg("marketSeg", "market", market);
+    $("tfSeg").querySelectorAll("button").forEach(b => { b.disabled = isCN && !["1d", "1w", "1M"].includes(b.dataset.tf); });
     state.loading = true;
     state.symbol = symbol;
     if (!opts.silent) $("symbolInput").value = symbol;
     $("chartLoading").classList.remove("hidden");
     $("refreshBtn").classList.add("spin");
     const ctrl = new AbortController();
+    state.controller = ctrl;
     const to = setTimeout(() => ctrl.abort(), 90000);
     try {
-      const url = `api/analyze?symbol=${encodeURIComponent(symbol)}&market=${state.market}&tf=${state.tf}`;
+      const url = `api/analyze?symbol=${encodeURIComponent(symbol)}&market=${market}&tf=${tf}`;
       const res = await fetch(url, { signal: ctrl.signal });
       const json = await res.json();
+      if (requestId !== state.requestId) return;
       if (!json.ok) throw new Error(json.error || "分析失败");
+      const preserveView = state.data && state.data.meta.display === json.meta.display && state.data.meta.tf === json.meta.tf;
       state.data = json;
+      state.loadedMarket = market;
       state.symbol = json.meta.display;
       localStorage.setItem("tradix.symbol", json.meta.display);
-      history.replaceState(null, "", `?symbol=${encodeURIComponent(json.meta.display)}&tf=${state.tf}&market=${state.market}`);
-      renderAll(json);
+      localStorage.setItem("tradix.tf", tf);
+      history.replaceState(null, "", `?symbol=${encodeURIComponent(json.meta.display)}&tf=${tf}&market=${market}`);
+      renderAll(json, preserveView);
       if (!opts.silent) toast(`已更新 ${json.meta.display} · ${json.meta.tf_label}`);
       if (!state.scanned) { state.scanned = true; setTimeout(() => scan(false), 400); }
     } catch (err) {
+      if (requestId !== state.requestId) return;
       const msg = err.name === "AbortError" ? "请求超时，请检查网络或行情源" : (err.message || "加载失败");
       toast(msg, true);
       if (!state.data) $("summaryText").textContent = "加载失败：" + msg;
+      else {
+        state.symbol = state.data.meta.display;
+        state.tf = state.data.meta.tf;
+        state.market = state.loadedMarket;
+        setSeg("tfSeg", "tf", state.tf);
+        setSeg("marketSeg", "market", state.market);
+        $("tfSeg").querySelectorAll("button").forEach(b => {
+          b.disabled = state.data.meta.market === "cn" && !["1d", "1w", "1M"].includes(b.dataset.tf);
+        });
+      }
     } finally {
       clearTimeout(to);
+      if (requestId !== state.requestId) return;
       state.loading = false;
       $("chartLoading").classList.add("hidden");
       $("refreshBtn").classList.remove("spin");
-      if (!opts.silent) $("symbolInput").value = state.symbol;
+      $("symbolInput").value = state.symbol;
     }
   }
 
   /* ---------------- 渲染 ---------------- */
-  function renderAll(d) {
+  function renderAll(d, preserveView) {
     renderQuote(d);
     renderGauge(d);
     renderMatrix(d);
@@ -284,7 +313,7 @@
     renderPlan(d);
     renderLevels(d);
     renderPerf(d);
-    state.chart.setData(d.chart);
+    state.chart.setData(d.chart, preserveView);
     document.title = `${d.meta.display} ${fmtPrice(d.quote.price)} · TRADIX`;
     renderWatch();
   }
@@ -305,7 +334,7 @@
     $("qChg").className = "chg " + cls(q.chg_pct);
     $("qHigh").textContent = fmtPrice(q.high);
     $("qLow").textContent = fmtPrice(q.low);
-    $("qVol").textContent = m.market === "crypto" ? "$" + fmtVol(q.volume_usd) : fmtVol(q.volume);
+    $("qVol").textContent = m.market === "crypto" ? fmtVol(q.volume_usd) + " " + m.currency : fmtVol(q.volume);
     $("qAtr").textContent = a.volatility.atr_pct + "%";
     $("qSource").textContent = m.source || "—";
     const t = new Date((m.fetched_at || m.last_t) * 1000);
@@ -317,7 +346,7 @@
     const p = d.analysis.perf || {};
     const row = $("perfRow");
     const items = [
-      ["5日", p.d5], ["20日", p.d20], ["60日", p.d60], ["120日", p.d120],
+      ["5根", p.d5], ["20根", p.d20], ["60根", p.d60], ["120根", p.d120],
       ["区间位置", d.analysis.range_pos, "%", true],
     ];
     row.innerHTML = items.map(([label, v, suffix, raw]) => {
@@ -397,7 +426,7 @@
       return `<div class="mtf-item" style="${m.current ? "border-color:rgba(47,227,164,.3)" : ""}">
         <div class="mh"><span>${esc(m.label)}${m.current ? " · 当前" : ""}</span><span>${has ? (m.score >= 0 ? "▲" : "▼") : "—"}</span></div>
         <div class="mv" style="color:${has ? scoreColor(sc) : "var(--muted)"}">${has ? (sc > 0 ? "+" : "") + sc.toFixed(0) : "—"}</div>
-        <div class="ms">${esc(m.verdict || (m.error ? "数据不足" : "—"))}</div>
+        <div class="ms">${esc(m.stale ? "缓存 · 不计入共振" : m.verdict || (m.error ? "数据不足" : "—"))}</div>
         <div class="mtrk">${bar}</div>
       </div>`;
     }).join("");
@@ -502,22 +531,36 @@
 
   async function scan(notify) {
     if (!state.watch.length) return;
+    if (state.scanning) return;
+    state.scanning = true;
+    $("scanBtn").disabled = true;
+    const symbols = state.watch.slice(), tf = state.tf;
+    const ctrl = new AbortController();
+    const timeout = setTimeout(() => ctrl.abort(), 90000);
     try {
       if (notify) toast("正在扫描自选…");
-      const res = await fetch(`api/scan?symbols=${encodeURIComponent(state.watch.join(","))}&tf=${state.tf}`);
-      const json = await res.json();
-      if (!json.ok) throw new Error(json.error);
-      json.items.forEach((it) => {
-        if (it.error) return;
-        state.watchInfo[it.symbol] = it;
-      });
+      const items = [];
+      for (let start = 0; start < symbols.length; start += 10) {
+        const batch = symbols.slice(start, start + 10);
+        const res = await fetch(`api/scan?symbols=${encodeURIComponent(batch.join(","))}&tf=${tf}`, { signal: ctrl.signal });
+        const json = await res.json();
+        if (!json.ok) throw new Error(json.error || "扫描失败");
+        items.push(...json.items);
+        json.items.forEach((it, index) => {
+          if (!it.error) state.watchInfo[batch[index]] = it;
+        });
+      }
       renderWatch();
       if (notify) {
-        const ok = json.items.filter((x) => !x.error).length;
-        toast(`扫描完成：${ok}/${json.items.length} 个品种`);
+        const ok = items.filter((x) => !x.error).length;
+        toast(`扫描完成：${ok}/${items.length} 个品种`);
       }
     } catch (e) {
       if (notify) toast("扫描失败：" + e.message, true);
+    } finally {
+      clearTimeout(timeout);
+      state.scanning = false;
+      $("scanBtn").disabled = false;
     }
   }
 

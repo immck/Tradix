@@ -92,7 +92,7 @@ def rsi(closes: Sequence[float], n: int = 14) -> List[Num]:
         if ag[i] is None or al[i] is None:
             continue
         if al[i] == 0:
-            out[i] = 100.0
+            out[i] = 50.0 if ag[i] == 0 else 100.0
         else:
             rs = ag[i] / al[i]  # type: ignore[operator]
             out[i] = 100 - 100 / (1 + rs)

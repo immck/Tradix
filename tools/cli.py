@@ -17,7 +17,7 @@ def main():
     candles, quote, meta = ds.get_ohlc(symbol, market, tf)
     ind = ta.compute_all(candles)
     res = an.evaluate(candles, ind, meta["market"])
-    plan = an.build_plan(res, candles, ind, quote, meta["market"], tf)
+    plan = an.build_plan(res, candles, ind, quote, meta["market"], tf, meta.get("currency", "USDT"))
 
     print(f"\n{meta['display']}  {meta.get('name')}  [{meta['market']} · {meta['tf_label']}]  {meta['source']}")
     print(f"价格 {quote.get('price')}  涨跌 {quote.get('chg_pct'):+.2f}%  K线 {meta['bars']} 根  最新 {meta['last_t']}")

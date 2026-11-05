@@ -7,6 +7,15 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
+python -c "from zoneinfo import ZoneInfo; ZoneInfo('America/New_York'); ZoneInfo('Asia/Shanghai')" >nul 2>nul
+if errorlevel 1 (
+  python -m pip install -r requirements.txt
+  if errorlevel 1 (
+    echo Timezone setup failed. Run: python -m pip install -r requirements.txt
+    pause
+    exit /b 1
+  )
+)
 start "" /b python -c "import time, webbrowser; time.sleep(1.5); webbrowser.open('http://127.0.0.1:8899')"
 python server.py
 pause

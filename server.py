@@ -53,6 +53,7 @@ def _mtf_one(symbol: str, market: str, tf: str, label: str):
             "ma_state": r["trend"]["ma_state"],
             "structure": r["structure"]["label"],
             "price": r["price"],
+            "stale": meta.get("stale", False),
         }
     except Exception as e:  # noqa: BLE001
         return {"tf": tf, "label": label, "error": str(e), "score": None}
@@ -78,7 +79,7 @@ def build_mtf(symbol: str, market: str, primary_tf: str):
 
 
 def combine_overall(primary: dict, mtf: list):
-    valid = [m for m in mtf if m.get("score") is not None]
+    valid = [m for m in mtf if m.get("score") is not None and not m.get("stale")]
     if not valid:
         return {
             "score": primary["score"],
@@ -165,7 +166,7 @@ def api_analyze(params):
     candles, quote, meta = ds.get_ohlc(symbol, market, tf)
     ind = ta.compute_all(candles)
     res = an.evaluate(candles, ind, meta["market"])
-    plan = an.build_plan(res, candles, ind, quote, meta["market"], tf)
+    plan = an.build_plan(res, candles, ind, quote, meta["market"], tf, meta.get("currency", "USDT"))
     mtf = build_mtf(symbol, meta["market"], tf)
     overall = combine_overall(res, mtf)
     if overall["resonance"] == "周期分歧":
@@ -306,8 +307,15 @@ class Handler(BaseHTTPRequestHandler):
     def _static(self, path: str):
         if path in ("/", ""):
             path = "/index.html"
-        safe = os.path.normpath(path.lstrip("/")).replace("..", "")
-        full = os.path.join(WEB_DIR, safe)
+        safe = urllib.parse.unquote(path).lstrip("/")
+        full = os.path.realpath(os.path.join(WEB_DIR, safe))
+        try:
+            inside = os.path.commonpath((os.path.realpath(WEB_DIR), full)) == os.path.realpath(WEB_DIR)
+        except ValueError:
+            inside = False
+        if not inside:
+            self._send(404, b"Not Found", "text/plain; charset=utf-8")
+            return
         if not os.path.isfile(full):
             self._send(404, b"Not Found", "text/plain; charset=utf-8")
             return

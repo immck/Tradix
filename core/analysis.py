@@ -29,7 +29,8 @@ def _round(v: float, digits: int = 2) -> float:
         return round(v, 2)
     if abs(v) >= 1:
         return round(v, 3)
-    return round(v, 5)
+    # Keep small-token prices and ATR values nonzero.
+    return float(f"{v:.{max(digits, 6)}g}")
 
 
 def fmt_price(v: float) -> float:
@@ -45,7 +46,7 @@ def money(v: float) -> str:
         return f"{v:,.2f}"
     if a >= 1:
         return f"{v:,.3f}"
-    return f"{v:,.5f}"
+    return f"{v:.6g}"
 
 
 # ---------------------------------------------------------------- 摆动结构
@@ -642,7 +643,7 @@ def _summary(res, swing_high=None, swing_low=None):
 
 
 # ---------------------------------------------------------------- 交易计划
-def build_plan(res, candles, ind, quote, market, tf):
+def build_plan(res, candles, ind, quote, market, tf, currency="USDT"):
     close = candles[-1]["c"]
     atr_v = _last(ind["atr"]) or close * 0.02
     e20 = _last(ind["ema20"])
@@ -703,7 +704,6 @@ def build_plan(res, candles, ind, quote, market, tf):
         t2 = pool[1] if len(pool) > 1 else t1 - 1.2 * risk
 
     rr = abs(t1 - entry_mid) / risk
-    measured = False
     # 盈亏比不足：先把进场位挪到最近的支撑/阻力附近，而不是硬拉目标价
     if rr < 1.15 and lv["supports" if long else "resistances"]:
         anchor = lv["supports" if long else "resistances"][0]["price"]
@@ -719,13 +719,6 @@ def build_plan(res, candles, ind, quote, market, tf):
             entry_mid = (entry_lo + entry_hi) / 2
             risk = max(abs(entry_mid - stop), atr_v * 0.2)
             rr = abs(t1 - entry_mid) / risk
-    # 仍然不足：改用 2R 量度目标（说明上方/下方最近结构位太近）
-    if rr < 1.15:
-        t1 = entry_mid + 2.0 * risk if long else entry_mid - 2.0 * risk
-        t2 = t1 + 1.2 * risk if long else t1 - 1.2 * risk
-        rr = 2.0
-        measured = True
-
     if long:
         t2 = min(t2, entry_mid + 4.5 * risk)
         t2 = max(t2, t1)
@@ -737,23 +730,24 @@ def build_plan(res, candles, ind, quote, market, tf):
     note = (
         f"止损 {money(stop)}（{abs(entry_mid - stop) / entry_mid * 100:.2f}%），第一目标 {money(t1)}，盈亏比 {rr:.2f}。"
     )
-    if measured:
-        note += " 最近结构位离进场区太近，第一目标按 2R 量度测算，需先突破该结构位。"
     if quality == "poor":
         note += " 当前盈亏比不足 1.2，建议等待回踩更深或突破确认后再执行。"
     if market == "crypto":
         units = 100.0 / risk if risk else 0
-        note += f" 以 1 万 USDT、单笔风险 1% 计算，仓位约 {units:,.3f} 单位（名义 {units * entry_mid:,.0f} USDT）。"
+        note += f" 以 1 万 {currency}、单笔风险 1% 计算，仓位约 {units:,.3f} 单位（名义 {units * entry_mid:,.0f} {currency}）。"
+    elif market == "cn":
+        units = math.floor(min(100.0 / risk, 10000.0 / entry_mid) / 100) * 100 if risk else 0
+        note += f" 以 1 万元、单笔风险 1% 且不使用杠杆计算，按 100 股一手可买 {units:,} 股。"
+        if not long:
+            note += " 此处做空仅表示看空方向，普通A股账户不能直接卖空。"
     else:
         units = 100.0 / risk if risk else 0
         note += f" 以 1 万美元、单笔风险 1% 计算，仓位约 {units:,.0f} 股（名义 {units * entry_mid:,.0f} 美元）。"
 
-    trig_hi = res["structure"].get("last_high")
-    trig_lo = res["structure"].get("last_low")
     if long:
-        trigger = f"回踩 {money(entry_lo)}–{money(entry_hi)} 分批；或站稳 {money(trig_hi or entry_hi)} 后突破追入"
+        trigger = f"回踩 {money(entry_lo)}–{money(entry_hi)} 后确认承接；突破入场需按实际成交价重新计算止损和盈亏比"
     else:
-        trigger = f"反弹 {money(entry_lo)}–{money(entry_hi)} 分批；或跌破 {money(trig_lo or entry_lo)} 后顺势追空"
+        trigger = f"反弹 {money(entry_lo)}–{money(entry_hi)} 后确认受阻；破位入场需按实际成交价重新计算止损和盈亏比"
 
     return {
         "bias": "long" if long else "short",

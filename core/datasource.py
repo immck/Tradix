@@ -19,7 +19,7 @@ import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CACHE_DIR = os.path.join(BASE_DIR, "data", "cache")
@@ -29,8 +29,11 @@ UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 )
-NY = ZoneInfo("America/New_York")
-CN = ZoneInfo("Asia/Shanghai")
+try:
+    NY = ZoneInfo("America/New_York")
+    CN = ZoneInfo("Asia/Shanghai")
+except ZoneInfoNotFoundError:
+    raise SystemExit("Missing timezone data. Run: python -m pip install -r requirements.txt")
 
 _SSL_CTX = ssl.create_default_context()
 _SSL_LAX = ssl.create_default_context()
@@ -168,6 +171,10 @@ def normalize(symbol: str, market: str = "auto"):
     raw = (symbol or "").strip().upper().replace(" ", "").lstrip("$")
     if not raw:
         raise NotFound("请输入交易品种，例如 BTC、ETH、NVDA、AAPL")
+    if market not in ("auto", "crypto", "us", "cn"):
+        raise DataError("不支持的市场类型")
+    if not re.fullmatch(r"[A-Z0-9][A-Z0-9./_-]{0,30}", raw):
+        raise NotFound("代码格式不正确，请输入交易代码")
 
     explicit = market in ("crypto", "us", "cn")
 
@@ -186,12 +193,14 @@ def normalize(symbol: str, market: str = "auto"):
             base, quote = cm.group(1), cm.group(2)
         else:
             base, quote = raw, "USDT"
+        if not re.fullmatch(r"[A-Z0-9]{1,20}", base):
+            raise NotFound("加密货币代码格式不正确")
         if quote == "USD":
             quote = "USDT"
         return "crypto", f"{base}_{quote}", f"{base}/{quote}"
 
     # ---- A 股：600519 / SH600519 / 600519.SH
-    m = re.fullmatch(r"(SH|SZ|BJ)?(\d{6})(?:\.(SH|SZ|BJ))?", raw)
+    m = re.fullmatch(r"(SH|SZ|BJ)?(\d{6})(?:\.(SH|SZ|BJ))?", raw) if market != "us" else None
     if m:
         code = m.group(2)
         pre = m.group(1) or m.group(3)
@@ -200,12 +209,19 @@ def normalize(symbol: str, market: str = "auto"):
         return "cn", f"{pre.lower()}{code}", code
 
     # ---- 美股
+    if market == "cn":
+        raise NotFound("A股请输入六位代码，例如 600519")
     sym = re.sub(r"\.(US|O|N)$", "", raw)
+    if not re.fullmatch(r"[A-Z0-9]+(?:[.-][A-Z0-9]+)*", sym):
+        raise NotFound("美股代码格式不正确")
     return "us", sym, sym
 
 
 def detect_tf(tf: str) -> str:
-    tf = (tf or "1d").lower()
+    tf = (tf or "1d").strip()
+    if tf == "1M":
+        return tf
+    tf = tf.lower()
     return tf if tf in TF_LABEL else "1d"
 
 
@@ -401,7 +417,7 @@ def fetch_crypto(symbol: str, code: str, tf: str):
     chg_pct = float(ticker.get("change_percentage") or 0)
     quote = {
         "price": price,
-        "chg": price * chg_pct / 100 if ticker.get("change_percentage") else 0.0,
+        "chg": price - price / (1 + chg_pct / 100) if chg_pct > -100 else 0.0,
         "chg_pct": chg_pct,
         "high": float(ticker.get("high_24h") or rows[-1]["h"]),
         "low": float(ticker.get("low_24h") or rows[-1]["l"]),
@@ -418,7 +434,7 @@ def fetch_crypto(symbol: str, code: str, tf: str):
         "code": used,
         "display": used.replace("_", "/"),
         "name": base_name,
-        "currency": "USDT",
+        "currency": used.rsplit("_", 1)[-1],
         "source": "Gate.io",
         "tz": "Asia/Shanghai",
     }
@@ -492,6 +508,7 @@ def fetch_us(symbol: str, code: str, tf: str):
 
     meta = dict(meta)
     meta["stale"] = stale
+    meta["fetched_at"] = payload.get("fetched_at", payload.get("_saved", time.time()))
     return data, quote, meta
 
 
@@ -522,12 +539,15 @@ TX_QUOTE = "https://qt.gtimg.cn/q={code}"
 
 
 def fetch_cn(symbol: str, code: str, tf: str):
-    period = {"1d": "day", "1w": "week", "1M": "month", "1h": "m60", "30m": "m30", "15m": "m15"}.get(tf, "day")
+    if tf not in ("1d", "1w", "1M"):
+        raise DataError("A股行情源仅支持日线、周线和月线，请切换周期")
+    period = {"1d": "day", "1w": "week", "1M": "month"}[tf]
     key = _cache_key("cn", code, tf)
     payload, stale = _load_or_fetch(key, 120 if tf in ("1d", "1w", "1M") else 60,
                                     lambda: _cn_fetch(code, period))
     data = payload["candles"]
     quote, meta = payload["quote"], dict(payload["meta"], stale=stale)
+    meta["fetched_at"] = payload.get("fetched_at", payload.get("_saved", time.time()))
     return data, quote, meta
 
 
@@ -535,7 +555,7 @@ def _cn_fetch(code: str, period: str):
     url = TX_KLINE.format(code=code, period=period, n=800)
     obj = _json(url)
     node = (obj.get("data") or {}).get(code) or {}
-    rows = node.get("qfq" + period) or node.get(period) or node.get("qfqday") or []
+    rows = node.get("qfq" + period) or node.get(period) or []
     if not rows:
         raise NotFound(f"A股代码 {code} 未获取到数据")
     candles = []
@@ -603,15 +623,18 @@ def _quote_from_rows(rows):
 def _load_or_fetch(key: str, ttl: int, fn):
     cached, _ = cache_get(key, ttl)
     if cached:
-        return cached, False
+        return cached, bool(cached.get("stale") or cached.get("meta", {}).get("stale"))
     try:
         payload = fn()
-        payload["fetched_at"] = time.time()
+        payload["fetched_at"] = payload.get("meta", {}).get("fetched_at", time.time())
+        if payload.get("stale") or payload.get("meta", {}).get("stale"):
+            return payload, True
         cache_put(key, payload)
         return payload, False
     except Exception as e:  # noqa: BLE001
         stale = cache_stale(key)
         if stale:
+            stale = dict(stale)
             stale["stale"] = True
             return stale, True
         raise e
@@ -620,6 +643,8 @@ def _load_or_fetch(key: str, ttl: int, fn):
 def get_ohlc(symbol: str, market: str = "auto", tf: str = "1d"):
     tf = detect_tf(tf)
     market, code, display = normalize(symbol, market)
+    if market == "cn" and tf not in ("1d", "1w", "1M"):
+        raise DataError("A股行情源仅支持日线、周线和月线，请切换周期")
     key = _cache_key(market, code, tf)
     ttl = _ttl(market, tf)
 
@@ -632,7 +657,7 @@ def get_ohlc(symbol: str, market: str = "auto", tf: str = "1d"):
             rows, quote, meta = fetch_us(symbol, code, tf)
         rows = _clean(rows)[-1000:]
         meta.update({"tf": tf, "tf_label": TF_LABEL[tf]})
-        return {"candles": rows, "quote": quote, "meta": meta, "stale": False}
+        return {"candles": rows, "quote": quote, "meta": meta, "stale": bool(meta.get("stale"))}
 
     payload, stale = _load_or_fetch(key, ttl, load)
     candles = payload["candles"]
@@ -640,7 +665,7 @@ def get_ohlc(symbol: str, market: str = "auto", tf: str = "1d"):
         raise DataError(f"{payload['meta'].get('display', symbol)} 的 {TF_LABEL[tf]} 数据不足（{len(candles)} 根）")
 
     meta = dict(payload["meta"])
-    meta["stale"] = stale or payload.get("stale", False)
+    meta["stale"] = bool(stale or payload.get("stale") or meta.get("stale"))
     meta["fetched_at"] = payload.get("fetched_at", time.time())
     meta["bars"] = len(candles)
     meta["last_t"] = candles[-1]["t"]

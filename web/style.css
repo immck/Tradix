@@ -572,7 +572,7 @@ body { min-height: 100vh; overflow-x: hidden; }
 }
 @media (max-width: 1280px) {
   .layout { grid-template-columns: minmax(0, 1fr) 320px; }
-  .col-left { display: none; }
+  .col-left { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-column: 1 / -1; order: 2; align-items: start; }
 }
 @media (max-width: 1020px) {
   .layout { grid-template-columns: minmax(0, 1fr); }
@@ -583,6 +583,7 @@ body { min-height: 100vh; overflow-x: hidden; }
   .search-wrap { order: 5; flex-basis: 100%; max-width: none; }
 }
 @media (max-width: 720px) {
+  .col-left { grid-template-columns: 1fr; }
   .grid-2 { grid-template-columns: 1fr; }
   .quote-top { gap: 12px; }
   .quote-price .price { font-size: 30px; }

@@ -16,7 +16,7 @@
     if (a >= 1000) return v.toLocaleString("en-US", { maximumFractionDigits: 2 });
     if (a >= 100) return v.toFixed(2);
     if (a >= 1) return v.toFixed(3);
-    return v.toFixed(5);
+    return Number(v.toPrecision(6)).toString();
   };
 
   const fmtVol = (v) => {
@@ -51,11 +51,20 @@
 
     setConfig(cfg) { Object.assign(this.cfg, cfg); this.draw(); }
 
-    setData(chart) {
+    setData(chart, preserveView) {
+      const old = this.data;
+      const previous = this.view;
       this.data = chart;
       const n = chart && chart.candles ? chart.candles.length : 0;
       const show = Math.min(n, 150);
       this.view = { start: Math.max(0, n - show), count: show || 1 };
+      if (preserveView && old && n) {
+        const count = Math.min(previous.count, n);
+        const follow = previous.start + previous.count >= old.candles.length;
+        const anchor = old.candles[previous.start];
+        const index = anchor ? chart.candles.findIndex(c => c[0] >= anchor[0]) : 0;
+        this.view = { start: follow ? n - count : Math.max(0, Math.min(n - count, index)), count };
+      }
       this.hover = -1;
       this.tip.classList.add("hidden");
       this.draw();
@@ -156,7 +165,7 @@
         html += `<div class="tr"><span style="color:#b28cff">EMA200</span><b>${fmt(d.ema200[i])}</b></div>`;
       }
       if (d.macd_dif && d.macd_dif[i] != null && d.macd_dea[i] != null) {
-        html += `<div class="tr" style="margin-top:4px"><span>MACD</span><b>${d.macd_dif[i].toFixed(3)} / ${d.macd_dea[i].toFixed(3)}</b></div>`;
+        html += `<div class="tr" style="margin-top:4px"><span>MACD</span><b>${fmt(d.macd_dif[i])} / ${fmt(d.macd_dea[i])}</b></div>`;
       }
       if (d.rsi && d.rsi[i] != null) {
         html += `<div class="tr"><span>RSI14</span><b>${d.rsi[i].toFixed(1)}</b></div>`;
@@ -184,7 +193,20 @@
     }
 
     _rects() {
-      const padL = 8, padR = this.W < 560 ? 58 : 66, padT = 30, padB = 22;
+      let padR = this.W < 560 ? 58 : 66;
+      if (this.data && this.data.candles.length) {
+        const d = this.data;
+        const prices = [d.candles[d.candles.length - 1][4],
+          ...(d.levels.supports || []).map(level => level.price),
+          ...(d.levels.resistances || []).map(level => level.price), d.plan?.stop, d.plan?.t1];
+        this.ctx.save();
+        this.ctx.font = MONO_SM;
+        for (const price of prices) {
+          if (Number.isFinite(price)) padR = Math.max(padR, this.ctx.measureText(`R1 ${fmt(price)}`).width + 14);
+        }
+        this.ctx.restore();
+      }
+      const padL = 8, padT = 30, padB = 22;
       const priceH = Math.max(120, this.H - padT - padB - 62 - (this.cfg.panel === "none" ? 0 : 92) - 14);
       const price = { x: padL, y: padT, w: this.W - padL - padR, h: priceH };
       const vol = { x: padL, y: price.y + price.h + 12, w: price.w, h: 48 };
@@ -452,8 +474,8 @@
           const price = hi - (y - r.price.y) / r.price.h * (hi - lo);
           ctx.setLineDash([]);
           ctx.fillStyle = "rgba(30,42,62,0.95)";
-          ctx.fillRect(r.price.x + r.price.w + 2, y - 9, 62, 18);
-          ctx.strokeStyle = "rgba(148,170,205,0.3)"; ctx.strokeRect(r.price.x + r.price.w + 2, y - 9, 62, 18);
+          ctx.fillRect(r.price.x + r.price.w + 2, y - 9, r.padR - 4, 18);
+          ctx.strokeStyle = "rgba(148,170,205,0.3)"; ctx.strokeRect(r.price.x + r.price.w + 2, y - 9, r.padR - 4, 18);
           ctx.fillStyle = "#c8d6ea"; ctx.font = MONO_SM; ctx.textAlign = "left"; ctx.textBaseline = "middle";
           ctx.fillText(fmt(price), r.price.x + r.price.w + 6, y);
         }
@@ -512,7 +534,7 @@
       ctx.font = '10px "JetBrains Mono", Consolas, monospace';
       ctx.textAlign = "left"; ctx.textBaseline = "middle";
       for (const t of list) {
-        const w = Math.min(64, ctx.measureText(t.text).width + 9);
+        const w = Math.min(r.padR - 4, ctx.measureText(t.text).width + 9);
         const x = r.price.x + r.price.w + 2;
         ctx.fillStyle = t.bg;
         ctx.fillRect(x, t.y - 7.5, w, 15);
@@ -532,7 +554,9 @@
       let x = 10;
       const up = c[4] >= c[1];
       ctx.fillStyle = up ? UP : DOWN;
-      const txt = `${this._time(c[0], true)}  O ${fmt(c[1])}  H ${fmt(c[2])}  L ${fmt(c[3])}  C ${fmt(c[4])}`;
+      const txt = this.W < 560
+        ? `${this._time(c[0], true)}  C ${fmt(c[4])}`
+        : `${this._time(c[0], true)}  O ${fmt(c[1])}  H ${fmt(c[2])}  L ${fmt(c[3])}  C ${fmt(c[4])}`;
       ctx.fillText(txt, x, 12);
       x += ctx.measureText(txt).width + 18;
       const emas = [["EMA20", d.ema20, "#f6b64b"], ["EMA50", d.ema50, "#6aa6ff"], ["EMA200", d.ema200, "#b28cff"]];
@@ -541,11 +565,12 @@
           if (!arr || arr[i] == null) continue;
           ctx.fillStyle = color;
           const s = `${name} ${fmt(arr[i])}`;
+          if (x + ctx.measureText(s).width > this.W - 8) break;
           ctx.fillText(s, x, 12);
           x += ctx.measureText(s).width + 12;
         }
       }
-      if (d.rsi && d.rsi[i] != null) {
+      if (d.rsi && d.rsi[i] != null && x + 58 <= this.W - 8) {
         ctx.fillStyle = "#b28cff";
         ctx.fillText(`RSI ${d.rsi[i].toFixed(1)}`, x, 12);
       }
@@ -595,7 +620,9 @@
       ctx.fillStyle = MUTED;
       const i = this.hover >= start && this.hover < end ? this.hover : end - 1;
       if (d.macd_dif[i] != null) {
-        ctx.fillText(`DIF ${d.macd_dif[i].toFixed(2)}  DEA ${d.macd_dea[i].toFixed(2)}  HIST ${d.macd_hist[i].toFixed(2)}`, rect.x + 46, rect.y + 2);
+        let text = `DIF ${fmt(d.macd_dif[i])}  DEA ${fmt(d.macd_dea[i])}  HIST ${fmt(d.macd_hist[i])}`;
+        if (ctx.measureText(text).width > rect.w - 46) text = `DIF ${fmt(d.macd_dif[i])}`;
+        ctx.fillText(text, rect.x + 46, rect.y + 2);
       }
     }
 
